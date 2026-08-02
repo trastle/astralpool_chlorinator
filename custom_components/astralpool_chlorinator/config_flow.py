@@ -1,144 +1,52 @@
-"""Config flow for Astral Pool Viron eQuilibrium Chlorinator integration."""
+"""Config flow for the Astral Pool Chlorinator integration - MQTT edition.
 
+No Bluetooth discovery, no access code - the Pi bridge already holds those
+and publishes decrypted state over MQTT. This just needs the device name
+segment used in its chlorinator/<name>/... topics.
+"""
 from __future__ import annotations
 
 import logging
 from typing import Any
 
-from bluetooth_data_tools import human_readable_name
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.components.bluetooth import (
-    BluetoothServiceInfoBleak,
-    async_discovered_service_info,
-)
 from homeassistant.config_entries import ConfigFlowResult
-from homeassistant.const import CONF_ACCESS_TOKEN, CONF_ADDRESS
-from homeassistant.core import callback
 
-from .const import DOMAIN, LOCAL_NAMES, CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL
+from .const import CONF_MQTT_NAME, DEFAULT_MQTT_NAME, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for eQuilibrium Chlorinator."""
+    """Handle a config flow for the MQTT-backed eQuilibrium Chlorinator."""
 
     VERSION = 1
-
-    def __init__(self) -> None:
-        """Initialize the config flow."""
-        self._discovery_info: BluetoothServiceInfoBleak | None = None
-        self._discovered_devices: dict[str, BluetoothServiceInfoBleak] = {}
-
-    @staticmethod
-    @callback
-    def async_get_options_flow(
-        config_entry: config_entries.ConfigEntry,
-    ) -> OptionsFlowHandler:
-        """Get the options flow handler."""
-        return OptionsFlowHandler()
-
-    async def async_step_bluetooth(
-        self, discovery_info: BluetoothServiceInfoBleak
-    ) -> ConfigFlowResult:
-        """Handle the bluetooth discovery step."""
-        await self.async_set_unique_id(discovery_info.address)
-        self._abort_if_unique_id_configured()
-        self._discovery_info = discovery_info
-        self.context["title_placeholders"] = {
-            "name": human_readable_name(
-                None, discovery_info.name, discovery_info.address
-            )
-        }
-        return await self.async_step_user()
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Handle the user step to pick discovered device."""
+        """Ask for the MQTT device name segment."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            address = user_input[CONF_ADDRESS]
-            accesscode = user_input[CONF_ACCESS_TOKEN]
-            discovery_info = self._discovered_devices[address]
-            local_name = discovery_info.name
-            await self.async_set_unique_id(
-                discovery_info.address, raise_on_progress=False
-            )
+            mqtt_name = user_input[CONF_MQTT_NAME].strip().lower()
+            await self.async_set_unique_id(mqtt_name)
             self._abort_if_unique_id_configured()
             return self.async_create_entry(
-                title=local_name,
-                data={
-                    CONF_ADDRESS: discovery_info.address,
-                    CONF_ACCESS_TOKEN: accesscode,
-                },
+                title=mqtt_name.upper(),
+                data={CONF_MQTT_NAME: mqtt_name},
             )
 
-        if discovery := self._discovery_info:
-            self._discovered_devices[discovery.address] = discovery
-        else:
-            current_addresses = self._async_current_ids()
-            for discovery in async_discovered_service_info(self.hass):
-                if (
-                    discovery.address in current_addresses
-                    or discovery.address in self._discovered_devices
-                    or not any(
-                        discovery.name.startswith(local_name)
-                        for local_name in LOCAL_NAMES
-                    )
-                ):
-                    continue
-                self._discovered_devices[discovery.address] = discovery
-
-        if not self._discovered_devices:
-            return self.async_abort(reason="no_unconfigured_devices")
-
         data_schema = vol.Schema(
-            {
-                vol.Required(CONF_ADDRESS): vol.In(
-                    {
-                        service_info.address: f"{service_info.name} ({service_info.address})"
-                        for service_info in self._discovered_devices.values()
-                    }
-                ),
-                vol.Required(CONF_ACCESS_TOKEN, description="CONF_ACCESS_TOKEN"): str,
-            }
+            {vol.Required(CONF_MQTT_NAME, default=DEFAULT_MQTT_NAME): str}
         )
         return self.async_show_form(
             step_id="user",
             data_schema=data_schema,
             errors=errors,
-        )
-
-class OptionsFlowHandler(config_entries.OptionsFlow):
-    """Handle options flow for Astral Pool Chlorinator."""
-
-    async def async_step_init(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Handle options flow."""
-        if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
-
-        schema = vol.Schema(
-            {
-                vol.Required(
-                    CONF_POLL_INTERVAL,
-                    default=self.config_entry.options.get(
-                        CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL
-                    ),
-                ): vol.All(int, vol.Range(min=10, max=300)),
-            }
-        )
-
-        return self.async_show_form(
-            step_id="init",
-            data_schema=schema,
             description_placeholders={
-                "min_interval": "10",
-                "max_interval": "300",
+                "example": "If the Pi bridge publishes to chlorinator/pool01/state, enter pool01."
             },
         )

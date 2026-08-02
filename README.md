@@ -1,3 +1,36 @@
+# Astral Pool Viron eQuilibrium Chlorinator - MQTT edition (fork)
+
+> **This is a fork of [pbutterworth/astralpool_chlorinator](https://github.com/pbutterworth/astralpool_chlorinator)**,
+> modified to consume chlorinator state from MQTT instead of talking
+> Bluetooth directly from the Home Assistant host.
+>
+> **Why**: the original integration needs the chlorinator within BLE range
+> of Home Assistant (or an ESPHome Bluetooth proxy). If your pool equipment
+> is out of range like ours, a companion project runs the actual BLE
+> connection on a Raspberry Pi near the equipment instead, and publishes
+> the decrypted state to MQTT:
+> [trastle/astral-pool-api-reverse-engineering](https://github.com/trastle/astral-pool-api-reverse-engineering).
+>
+> **What changed**: `coordinator.py` subscribes to `chlorinator/<name>/state`
+> via Home Assistant's own MQTT connection instead of polling over
+> Bluetooth; a new `mqtt_client.py` publishes writes to
+> `chlorinator/<name>/action` and `chlorinator/<name>/setup` instead of
+> writing directly over BLE; `config_flow.py` just asks for the device name
+> segment instead of a BLE address + access code. **Every entity platform
+> file (`sensor.py`, `binary_sensor.py`, `select.py`, `number.py`,
+> `button.py`) is completely unmodified** - they only ever talk to
+> `coordinator.data` and `coordinator.chlorinator`, which still behave the
+> same shape as the original.
+>
+> **Write support status**: the write path (mode/speed select, setpoint
+> numbers, action buttons) publishes MQTT messages correctly, but as of
+> this fork's initial version the companion Pi bridge doesn't yet subscribe
+> to or act on `action`/`setup` - so using those controls is currently a
+> safe no-op, not yet reaching the real device. That's deliberate, pending
+> the Pi bridge's write support being built.
+
+---
+
 # Astral Pool Viron eQuilibrium Chlorinator
 
 [![GitHub Release][releases-shield]][releases]
@@ -33,7 +66,11 @@
 4. Download _all_ the files from the `custom_components/astralpool_chlorinator/` directory (folder) in this repository.
 5. Place the files you downloaded in the new directory (folder) you created.
 6. Restart Home Assistant
-7. Wait paitently for your chlorinator to be discovered (should only be a few seconds once HA has started up)
+7. Go to **Settings → Devices & Services → Add Integration**, search for
+   "Astral Pool", and enter the device name segment your MQTT bridge
+   publishes to (e.g. if it publishes `chlorinator/pool01/state`, enter
+   `pool01`). No Bluetooth discovery in this fork - the Pi bridge already
+   found the device.
 
 Using your HA configuration directory (folder) as a starting point you should now also have this:
 
@@ -57,12 +94,11 @@ custom_components/astralpool_chlorinator/switch.py
 
 ## Configuration is done in the UI
 
-After installation, the poll interval can be configured via:
-**Settings → Integrations → Astral Pool → ⚙️ Configure**
-
-| Setting | Description | Default | Range |
-| ------- | ----------- | ------- | ----- |
-| Poll Interval (seconds) | How frequently the integration connects via Bluetooth to read device state. Setting too low may cause connection issues. | 60 | 10-300 |
+Configuration is just the device name segment, entered once during setup -
+there's no poll interval to configure here since this integration doesn't
+poll: it's push-based, updating whenever the Pi bridge publishes a new MQTT
+message (that bridge has its own poll interval, configured on the Pi
+itself).
 
 ## Credits
 

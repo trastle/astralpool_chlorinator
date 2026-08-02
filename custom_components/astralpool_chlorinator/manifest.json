@@ -1,25 +1,20 @@
 {
   "domain": "astralpool_chlorinator",
-  "name": "Astral Pool Viron eQuilibrium Chlorinator",
-  "bluetooth": [
-    {
-      "service_uuid": "45000001-98b7-4e29-a03f-160174643001"
-    }
-  ],
+  "name": "Astral Pool Viron eQuilibrium Chlorinator (MQTT edition)",
   "codeowners": [
-    "@pbutterworth"
+    "@pbutterworth",
+    "@trastle"
   ],
   "config_flow": true,
   "dependencies": [
-    "bluetooth_adapters"
+    "mqtt"
   ],
-  "documentation": "https://github.com/pbutterworth/astrapool_chlorinator",
-  "issue_tracker": "https://github.com/pbutterworth/astrapool_chlorinator/issues",
+  "documentation": "https://github.com/trastle/astralpool_chlorinator",
+  "issue_tracker": "https://github.com/trastle/astralpool_chlorinator/issues",
   "integration_type": "device",
-  "iot_class": "local_polling",
+  "iot_class": "local_push",
   "requirements": [
-    "bluetooth-data-tools>=0.4.0",
     "pychlorinator>=0.3.0"
   ],
-  "version": "0.2.0"
+  "version": "0.1.0-mqtt-fork"
 }

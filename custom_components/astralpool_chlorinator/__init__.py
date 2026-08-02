@@ -1,19 +1,22 @@
-"""The Astral Pool Viron eQuilibrium Chlorinator BLE integration."""
+"""The Astral Pool Viron eQuilibrium Chlorinator integration - MQTT edition.
+
+Forked from https://github.com/pbutterworth/astralpool_chlorinator to
+consume state from an MQTT bridge running on a Raspberry Pi near the pool
+equipment (https://github.com/trastle/astral-pool-api-reverse-engineering),
+instead of talking BLE directly from Home Assistant - solves the
+Bluetooth-range problem this integration otherwise has when the chlorinator
+isn't within BLE range of the HA host itself.
+"""
 
 from __future__ import annotations
 
 import logging
 
-from bleak_retry_connector import get_device
-from pychlorinator.chlorinator import ChlorinatorAPI
-
-from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_ACCESS_TOKEN, CONF_ADDRESS, Platform
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
 
-from .const import DOMAIN
+from .const import CONF_MQTT_NAME, DOMAIN
 from .coordinator import ChlorinatorDataUpdateCoordinator
 from .models import ChlorinatorData
 
@@ -22,31 +25,20 @@ _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up Chlorinator from a config entry."""
+    """Set up Chlorinator (MQTT edition) from a config entry."""
 
-    address: str = entry.data[CONF_ADDRESS]
-    accesscode: str = entry.data[CONF_ACCESS_TOKEN]
-    ble_device = bluetooth.async_ble_device_from_address(
-        hass, address.upper(), True
-    ) or await get_device(address)
-    if not ble_device:
-        raise ConfigEntryNotReady(
-            f"Could not find chlorinator device with address {address}"
-        )
+    mqtt_name: str = entry.data[CONF_MQTT_NAME]
 
-    _LOGGER.debug("async_setup_entry address:  %s accesscode %s", address, accesscode)
-
-    chlorinator = ChlorinatorAPI(ble_device, accesscode)
-    coordinator = ChlorinatorDataUpdateCoordinator(hass, chlorinator, entry)
-    await coordinator.async_config_entry_first_refresh()
+    coordinator = ChlorinatorDataUpdateCoordinator(hass, mqtt_name, entry)
+    await coordinator.async_start()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = ChlorinatorData(
-        entry.title, chlorinator, coordinator
+        entry.title, coordinator.chlorinator, coordinator
     )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    # Add listener to reload entry when options change
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
+    entry.async_on_unload(coordinator.async_stop)
     return True
 
 
@@ -58,6 +50,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             unload_ok = False
 
     return unload_ok
+
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Reload entry when options change."""

@@ -1,16 +1,16 @@
-"""The chlorinator ble integration models."""
+"""The chlorinator integration models (MQTT edition)."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pychlorinator.chlorinator import ChlorinatorAPI
 from .coordinator import ChlorinatorDataUpdateCoordinator
+from .mqtt_client import MqttChlorinatorClient
 
 
 @dataclass
 class ChlorinatorData:
-    """Data for the chlorinator ble integration."""
+    """Data for the chlorinator integration."""
 
     title: str
-    device: ChlorinatorAPI
+    device: MqttChlorinatorClient
     coordinator: ChlorinatorDataUpdateCoordinator
