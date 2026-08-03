@@ -1,0 +1,62 @@
+name: Sync main from upstream
+
+# Keeps `main` a clean mirror of pbutterworth/astralpool_chlorinator's main -
+# our own changes live on `mqtt` instead (see that branch's README section).
+#
+# Goes through an actual PR rather than a direct/force push, since `main` is
+# branch-protected (no direct pushes, even for admins) - merging a PR is the
+# sanctioned path under that protection, and works here without needing any
+# special bypass because the branch protection requires zero approvals, so
+# this workflow's own token can merge immediately once the PR is open.
+
+on:
+  schedule:
+    - cron: "17 6 * * *" # daily, avoid the very-top-of-hour rush
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/pbutterworth/astralpool_chlorinator.git
+          git fetch upstream main
+
+      - name: Check whether an update is needed
+        id: check
+        run: |
+          if git diff --quiet HEAD upstream/main; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fast-forward a sync branch to upstream/main
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          git checkout -b sync-upstream-${{ github.run_id }}
+          git merge --ff-only upstream/main
+          git push origin "sync-upstream-${{ github.run_id }}"
+
+      - name: Open and merge the sync PR
+        if: steps.check.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pr_url=$(gh pr create \
+            --base main \
+            --head "sync-upstream-${{ github.run_id }}" \
+            --title "Sync main with upstream" \
+            --body "Automated fast-forward sync from pbutterworth/astralpool_chlorinator's main branch.")
+          gh pr merge "$pr_url" --merge --delete-branch
