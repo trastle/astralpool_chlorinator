@@ -152,3 +152,15 @@ class ChlorinatorDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._unsubscribe:
             self._unsubscribe()
             self._unsubscribe = None
+
+    async def _async_update_data(self) -> dict[str, Any]:
+        """No-op poll: this coordinator is push-based (state arrives via
+        MQTT, see async_start() above), but select.py/number.py/button.py
+        (unmodified from upstream) all call
+        `await self.coordinator.async_request_refresh()` after a write -
+        that's redundant here since the Pi bridge already re-publishes state
+        moments after a successful write, but DataUpdateCoordinator raises
+        NotImplementedError if a subclass never overrides this method at
+        all. Returning the current cached data keeps that call harmless
+        instead of surfacing a spurious error in the HA UI."""
+        return self.data
