@@ -4,6 +4,8 @@ from __future__ import annotations
 import logging
 from datetime import timedelta
 
+from pychlorinator.chlorinator_parsers import SpeedLevels
+
 from homeassistant.components.sensor import (
     SensorEntity,
     SensorEntityDescription,
@@ -21,6 +23,14 @@ from homeassistant.helpers.update_coordinator import (
 from .coordinator import ChlorinatorDataUpdateCoordinator
 from .models import ChlorinatorData
 from .const import DOMAIN
+
+# Fixed 4 timer slots (matches pychlorinator's
+# NUMBER_OF_PUMP_TIMERS_SUPPORTED) - the Pi bridge publishes these as
+# coordinator.data["pump_timers"], a list of 4 dicts
+# ({start_time, stop_time, enabled, speed_level}, see mqtt_bridge.py's
+# build_state_payload()). Read-only for now; enable/disable and editing
+# are a separate, later phase that needs new BLE write support.
+NUMBER_OF_PUMP_TIMERS = 4
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -191,6 +201,9 @@ async def async_setup_entry(
         ChlorinatorSensor(data.coordinator, sensor_desc)
         for sensor_desc in CHLORINATOR_SENSOR_TYPES
     ]
+    entities += [
+        ChlorinatorTimerSensor(data.coordinator, i) for i in range(NUMBER_OF_PUMP_TIMERS)
+    ]
     async_add_entities(entities)
 
 
@@ -232,3 +245,61 @@ class ChlorinatorSensor(
         if isinstance(value, timedelta):
             return value.total_seconds() / 3600
         return value
+
+
+class ChlorinatorTimerSensor(
+    CoordinatorEntity[ChlorinatorDataUpdateCoordinator], SensorEntity
+):
+    """One pump timer slot. State is a human-readable summary; the
+    individual fields (also available raw over MQTT/pychlorinator) are
+    exposed as extra state attributes for anyone who wants exact values
+    - e.g. for automations/templates, or as the read side that a future
+    switch/time entity (enable/disable, edit) would pair with."""
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:timer-outline"
+
+    def __init__(self, coordinator: ChlorinatorDataUpdateCoordinator, index: int) -> None:
+        """Initialize the sensor. index is 0-based; timer slots are
+        numbered from 1 in the entity name/id to match the pump's own app
+        and astral-pool-webui's dashboard, which both call them Timer 1-4."""
+        super().__init__(coordinator)
+        self._index = index
+        slot = index + 1
+        self._attr_unique_id = f"POOL01_pump_timer_{slot}".lower()
+        self._attr_name = f"Pump timer {slot}"
+
+    @property
+    def device_info(self) -> DeviceInfo | None:
+        return {
+            "identifiers": {(DOMAIN, "POOL01")},
+            "name": "POOL01",
+            "model": "Viron eQuilibrium",
+            "manufacturer": "Astral Pool",
+        }
+
+    def _timer(self) -> dict | None:
+        timers = self.coordinator.data.get("pump_timers") or []
+        return timers[self._index] if self._index < len(timers) else None
+
+    @property
+    def native_value(self):
+        timer = self._timer()
+        if timer is None:
+            return None
+        if not timer["enabled"]:
+            return "Disabled"
+        speed = SpeedLevels(timer["speed_level"]).name
+        return f"{timer['start_time'][:5]}–{timer['stop_time'][:5]} ({speed})"
+
+    @property
+    def extra_state_attributes(self):
+        timer = self._timer()
+        if timer is None:
+            return None
+        return {
+            "start_time": timer["start_time"],
+            "stop_time": timer["stop_time"],
+            "enabled": timer["enabled"],
+            "speed_level": SpeedLevels(timer["speed_level"]).name,
+        }
