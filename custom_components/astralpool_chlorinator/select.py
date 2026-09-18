@@ -23,6 +23,41 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
+# The BLE connection to this device can fail outright on a single write -
+# not a slow confirmation, a dropped command with nothing else retrying it
+# (observed 2026-09-18: a mode-change command failed with "device
+# disappeared" and the select entity just sat on the old value for over an
+# hour until someone noticed and re-sent it manually - see
+# home-assistant/pool/session-notes-2026-09-18.md in the docs repo). Retry
+# the write itself here, in the entity, so both a person using the control
+# and anything else calling select.select_option (e.g. an automation) get
+# the same reliability for free.
+_WRITE_RETRY_ATTEMPTS = 3
+_WRITE_RETRY_DELAY_SECONDS = 15
+
+
+async def _write_with_retries(coordinator, write_coro_factory, entity_name: str) -> None:
+    """Attempt a BLE write up to _WRITE_RETRY_ATTEMPTS times, _WRITE_RETRY_DELAY_SECONDS apart."""
+    last_exc: Exception | None = None
+    for attempt in range(1, _WRITE_RETRY_ATTEMPTS + 1):
+        try:
+            async with coordinator._ble_lock:
+                await write_coro_factory()
+            return
+        except Exception as exc:  # noqa: BLE001 - retry-and-reraise, not swallow
+            last_exc = exc
+            _LOGGER.warning(
+                "%s: BLE write attempt %d/%d failed: %s",
+                entity_name, attempt, _WRITE_RETRY_ATTEMPTS, exc,
+            )
+            if attempt < _WRITE_RETRY_ATTEMPTS:
+                await asyncio.sleep(_WRITE_RETRY_DELAY_SECONDS)
+    _LOGGER.error(
+        "%s: all %d BLE write attempts failed, giving up",
+        entity_name, _WRITE_RETRY_ATTEMPTS,
+    )
+    raise last_exc
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -85,8 +120,11 @@ class ChlorinatorModeSelect(
             action = chlorinator_parsers.ChlorinatorActions.Manual
         else:
             action = chlorinator_parsers.ChlorinatorActions.NoAction
-        async with self.coordinator._ble_lock:
-            await self.coordinator.chlorinator.async_write_action(action)
+        await _write_with_retries(
+            self.coordinator,
+            lambda: self.coordinator.chlorinator.async_write_action(action),
+            self._attr_name,
+        )
         await asyncio.sleep(2)
         await self.coordinator.async_request_refresh()
 
@@ -138,8 +176,11 @@ class ChlorinatorSpeedSelect(
             action = chlorinator_parsers.ChlorinatorActions.High
         else:
             action = chlorinator_parsers.ChlorinatorActions.NoAction
-        async with self.coordinator._ble_lock:
-            await self.coordinator.chlorinator.async_write_action(action)
+        await _write_with_retries(
+            self.coordinator,
+            lambda: self.coordinator.chlorinator.async_write_action(action),
+            self._attr_name,
+        )
         await asyncio.sleep(2)
         await self.coordinator.async_request_refresh()
 
@@ -188,9 +229,12 @@ class ChlorinatorDefaultManualSpeedSelect(
             speed = SpeedLevels.Medium
         else:
             speed = SpeedLevels.High
-        async with self.coordinator._ble_lock:
-            await self.coordinator.chlorinator.async_write_setup(
+        await _write_with_retries(
+            self.coordinator,
+            lambda: self.coordinator.chlorinator.async_write_setup(
                 default_manual_on_speed=speed
-            )
+            ),
+            self._attr_name,
+        )
         await asyncio.sleep(2)
         await self.coordinator.async_request_refresh()
