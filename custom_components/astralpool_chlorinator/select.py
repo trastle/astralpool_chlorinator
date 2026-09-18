@@ -35,7 +35,7 @@ class _OptimisticOptionMixin:
     Without this, picking a new option flickers back to the old one for
     the few seconds it takes the Pi bridge to write, re-poll, and
     republish state, then jumps to the real value once that arrives (seen
-    live 2026-09-19 - see home-assistant/pool/session-notes-2026-09-19.md
+    live 2026-09-18 - see home-assistant/pool/session-notes-2026-09-18.md
     in the docs repo). Expires after _OPTIMISTIC_OPTION_TIMEOUT_SECONDS
     even without confirmation, so a write that silently didn't take (or
     got overtaken by something else) doesn't leave the entity stuck
