@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import asyncio
+import time
 
 from pychlorinator import chlorinator_parsers
 from homeassistant.components.select import (
@@ -23,6 +24,43 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
+# How long an optimistic value is trusted over the coordinator's own data
+# before giving up on it - see _OptimisticOptionMixin.
+_OPTIMISTIC_OPTION_TIMEOUT_SECONDS = 30
+
+
+class _OptimisticOptionMixin:
+    """Shows the just-selected option immediately after a write succeeds,
+    instead of the pre-write value the coordinator hasn't caught up to yet.
+    Without this, picking a new option flickers back to the old one for
+    the few seconds it takes the Pi bridge to write, re-poll, and
+    republish state, then jumps to the real value once that arrives (seen
+    live 2026-09-19 - see home-assistant/pool/session-notes-2026-09-19.md
+    in the docs repo). Expires after _OPTIMISTIC_OPTION_TIMEOUT_SECONDS
+    even without confirmation, so a write that silently didn't take (or
+    got overtaken by something else) doesn't leave the entity stuck
+    showing a wrong value indefinitely - falls back to whatever the
+    coordinator actually reports instead."""
+
+    _optimistic_option: str | None = None
+    _optimistic_option_expires: float = 0.0
+
+    def _resolve_optimistic(self, actual: str) -> str:
+        if self._optimistic_option is not None:
+            if (
+                actual == self._optimistic_option
+                or time.monotonic() > self._optimistic_option_expires
+            ):
+                self._optimistic_option = None
+            else:
+                return self._optimistic_option
+        return actual
+
+    def _set_optimistic(self, option: str) -> None:
+        self._optimistic_option = option
+        self._optimistic_option_expires = time.monotonic() + _OPTIMISTIC_OPTION_TIMEOUT_SECONDS
+        self.async_write_ha_state()
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -40,7 +78,7 @@ async def async_setup_entry(
 
 
 class ChlorinatorModeSelect(
-    CoordinatorEntity[ChlorinatorDataUpdateCoordinator], SelectEntity
+    _OptimisticOptionMixin, CoordinatorEntity[ChlorinatorDataUpdateCoordinator], SelectEntity
 ):
     """Representation of a Clorinator Select entity."""
 
@@ -69,11 +107,12 @@ class ChlorinatorModeSelect(
     def current_option(self):
         mode = self.coordinator.data.get("mode")
         if mode is chlorinator_parsers.Modes.Off:
-            return "Off"
+            actual = "Off"
         elif mode is chlorinator_parsers.Modes.Auto:
-            return "Auto"
+            actual = "Auto"
         else:
-            return "Manual"
+            actual = "Manual"
+        return self._resolve_optimistic(actual)
 
     async def async_select_option(self, option: str) -> None:
         """Change the selected option"""
@@ -87,11 +126,12 @@ class ChlorinatorModeSelect(
             action = chlorinator_parsers.ChlorinatorActions.NoAction
         async with self.coordinator._ble_lock:
             await self.coordinator.chlorinator.async_write_action(action)
+        self._set_optimistic(option)
         await asyncio.sleep(2)
         await self.coordinator.async_request_refresh()
 
 class ChlorinatorSpeedSelect(
-    CoordinatorEntity[ChlorinatorDataUpdateCoordinator], SelectEntity
+    _OptimisticOptionMixin, CoordinatorEntity[ChlorinatorDataUpdateCoordinator], SelectEntity
 ):
     """Representation of a Clorinator Select entity."""
 
@@ -120,13 +160,14 @@ class ChlorinatorSpeedSelect(
     def current_option(self):
         speed = self.coordinator.data.get("pump_speed")
         if speed is chlorinator_parsers.SpeedLevels.Low:
-            return "Low"
+            actual = "Low"
         elif speed is chlorinator_parsers.SpeedLevels.Medium:
-            return "Medium"
+            actual = "Medium"
         elif speed is chlorinator_parsers.SpeedLevels.AI:
-            return "AI"
+            actual = "AI"
         else:
-            return "High"
+            actual = "High"
+        return self._resolve_optimistic(actual)
 
     async def async_select_option(self, option: str) -> None:
         """Change the selected option"""
@@ -140,11 +181,12 @@ class ChlorinatorSpeedSelect(
             action = chlorinator_parsers.ChlorinatorActions.NoAction
         async with self.coordinator._ble_lock:
             await self.coordinator.chlorinator.async_write_action(action)
+        self._set_optimistic(option)
         await asyncio.sleep(2)
         await self.coordinator.async_request_refresh()
 
 class ChlorinatorDefaultManualSpeedSelect(
-    CoordinatorEntity[ChlorinatorDataUpdateCoordinator], SelectEntity
+    _OptimisticOptionMixin, CoordinatorEntity[ChlorinatorDataUpdateCoordinator], SelectEntity
 ):
     """Representation of a Chlorinator Default Manual Speed Select entity."""
 
@@ -173,11 +215,12 @@ class ChlorinatorDefaultManualSpeedSelect(
     def current_option(self):
         speed = self.coordinator.data.get("default_manual_on_speed")
         if speed is chlorinator_parsers.SpeedLevels.Low:
-            return "Low"
+            actual = "Low"
         elif speed is chlorinator_parsers.SpeedLevels.Medium:
-            return "Medium"
+            actual = "Medium"
         else:
-            return "High"
+            actual = "High"
+        return self._resolve_optimistic(actual)
 
     async def async_select_option(self, option: str) -> None:
         """Change the default manual speed."""
@@ -192,5 +235,6 @@ class ChlorinatorDefaultManualSpeedSelect(
             await self.coordinator.chlorinator.async_write_setup(
                 default_manual_on_speed=speed
             )
+        self._set_optimistic(option)
         await asyncio.sleep(2)
         await self.coordinator.async_request_refresh()
